@@ -1,0 +1,35 @@
+[package]
+name = "EJS"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+eframe = { version = "0.23.0", features = ["persistence"] }
+egui = "0.23.0"
+egui_extras = { version = "*", features = ["all_loaders"] }
+env_logger = "0.10.0"
+image = { version = "0.24", features = ["jpeg", "png"] } # Add the types you want support for
+rfd = "0.12.0"
+snmalloc-rs = { version = "0.3.4", features = ["usecxx17", "build_cc"] }
+polars = { version = "0.33.2", features = ["lazy","strings","cum_agg","timezones","temporal","dtype-datetime","dtype-duration","dtype-date", "dtype-time"]}
+anyhow = "1.0.75"
+dashmap = { version = "5.5.3", features = ["rayon", "inline"] }
+dicom = "0.6.1"
+dicom-core = "0.6.1"
+dicom-object = "0.6.1"
+jwalk = "0.8.1"
+rayon = "1.8.0"
+dicom-pixeldata = {version="*",features=["image","ndarray"]}
+ndarray = "0.15.6"
+zip = "0.6.6"
+egui-notify = "0.10.0"
+chrono = "0.4.31"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
+
