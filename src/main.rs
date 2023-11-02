@@ -19,7 +19,9 @@ use std::{
     fs::File,
     path::{Path, PathBuf},
 };
+use csv::Writer;
 use chrono::prelude::*;
+use polars::series::ops::NullBehavior;
 
 use ::zip::read::ZipArchive;
 #[inline(always)]
@@ -83,7 +85,7 @@ fn read_csv_file(path: &Path) -> PolarsResult<DataFrame> {
         .with_try_parse_dates(true)
         .finish().expect("Not a csv")
         .with_columns([col("Time").str().to_datetime(
-            Some(TimeUnit::Microseconds),
+            Some(TimeUnit::Milliseconds),
             None,
             StrptimeOptions {
                 format: Some("%Y%m%d%H%M%S ".to_string()),
@@ -193,6 +195,7 @@ struct MyEguiApp {
     filepath: Option<PathBuf>,
     df: Option<DataFrame>,
     selected_uid: String,
+    summaryname: String,
     selected_folder: Option<PathBuf>,
     presorted: DashMap<String,Vec<(FileDicomObject<InMemDicomObject>, PathBuf)>>,
     current_image_index: usize,
@@ -217,6 +220,7 @@ impl MyEguiApp {
             filepath: None,
             df: None,
             selected_uid: String::new(),
+            summaryname: "summary.csv".to_string(),
             selected_folder: None, // Add this line
             presorted: DashMap::new(), // Add this line
             current_image_index: 1,
@@ -231,14 +235,14 @@ impl MyEguiApp {
                             "spacing\n (mm)".to_string(),
                             "Pulses\n (#)".to_string(),
                             "P.Dur\n (ms)".to_string(),
-                            "Rep.Time\n (s)".to_string(),
+                            "Rep\nTime\n (s)".to_string(),
                             "Reps\n (#)".to_string(),
                             "En.foci\n (J/spot)".to_string(),
                             "Tar\n Vol\n (mm3)".to_string(),
                             "En.Vol\n (J/mm3)".to_string(),
                             "Son.Dur\n (s)".to_string(),
                             "PRF\n (Hz)".to_string(),
-                            "Rec.Phase\n (ms)".to_string(),
+                            "Rec\nPhase\n (ms)".to_string(),
                             "Period\n (ms)".to_string(),
                             "DC\n (%)".to_string(),
                             "DCPS \n (%)".to_string(),
@@ -249,14 +253,17 @@ impl MyEguiApp {
     #[inline(always)]
     fn show_summary_ui(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            if ui.button("From CSV").clicked() {
-                if let Some(path) = rfd::FileDialog::new().pick_file() {
-                    self.filepath = Some(path);
-                    self.df = Some(read_csv_file(self.filepath.as_ref().unwrap().as_path()).unwrap());
-                }
-            };
-            ui.horizontal(|ui| {
-                if ui.button("From ZIP").clicked() {
+            ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
+                if ui.button(RichText::new("From CSV").size(25.0)).clicked() {
+                    if let Some(path) = rfd::FileDialog::new().pick_file() {
+                        self.filepath = Some(path);
+                        self.df = Some(read_csv_file(self.filepath.as_ref().unwrap().as_path()).unwrap());
+                    }
+                };
+            });
+            ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
+
+                if ui.button(RichText::new("From ZIP").size(25.0)).clicked() {
                     if let Some(path) = rfd::FileDialog::new().pick_file() {
                     let csv_contents = read_csv_from_zip(path.as_path(), "TreatSummary.csv").expect("could not find summary");
                     // Write the CSV contents to a temporary file
@@ -273,36 +280,40 @@ impl MyEguiApp {
                         extract_zip(path.as_path(), &dir_path);
                     }
                 }
-                };
-                ui.checkbox(&mut self.extract_images, "Extract Images");
+            };
             });
-            if ui.button("From Snapshots").clicked() {
-                if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                    let dir_path = path.clone();
-                    let new_dir_path = dir_path.join(format!("{}_extracted", dir_path.to_str().unwrap_or_default()));
-                    if std::fs::create_dir_all(&new_dir_path).is_err() {
-                        eprintln!("Failed to create directory");
-                    } else {
-                        match std::fs::read_dir(&dir_path) {
-                            Ok(entries) => {
-                                for entry in entries {
-                                    match entry {
-                                        Ok(entry) => {
-                                            if let Some(extension) = entry.path().extension() {
-                                                if extension == "zip" {
-                                                    extract_zip(entry.path().as_path(), &new_dir_path);
+            ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
+                ui.checkbox(&mut self.extract_images, RichText::new("Extract Images").size(25.0));
+            });
+            ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
+                if ui.button(RichText::new("From Snapshots").size(25.0)).clicked() {
+                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                        let dir_path = path.clone();
+                        let new_dir_path = dir_path.join(format!("{}_extracted", dir_path.to_str().unwrap_or_default()));
+                        if std::fs::create_dir_all(&new_dir_path).is_err() {
+                            eprintln!("Failed to create directory");
+                        } else {
+                            match std::fs::read_dir(&dir_path) {
+                                Ok(entries) => {
+                                    for entry in entries {
+                                        match entry {
+                                            Ok(entry) => {
+                                                if let Some(extension) = entry.path().extension() {
+                                                    if extension == "zip" {
+                                                        extract_zip(entry.path().as_path(), &new_dir_path);
+                                                    }
                                                 }
-                                            }
-                                        },
-                                        Err(_) => eprintln!("Failed to read entry"),
+                                            },
+                                            Err(_) => eprintln!("Failed to read entry"),
+                                        }
                                     }
-                                }
-                            },
-                            Err(_) => eprintln!("Failed to read directory"),
+                                },
+                                Err(_) => eprintln!("Failed to read directory"),
+                            }
                         }
                     }
-                }
-            };
+                };
+            });
 
             if self.df.is_some() {
                 let df = self.df.as_ref().unwrap();
@@ -332,198 +343,193 @@ impl MyEguiApp {
     #[inline(always)]
     fn show_parameter_ui(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.spacing_mut().slider_width = 0.2*ui.available_width();
-            ui.label("power (W)");
-            ui.add(
-                egui::Slider::new(&mut self.power, 0.0..=100.0)
-                    .clamp_to_range(false),
-            );
-            ui.label("# of Subspots");
-            ui.add(
-                egui::Slider::new(&mut self.subspots, 1..=64)
-                    .clamp_to_range(false),
-            );
-            ui.label("Subspot Spacing");
-            ui.add(
-                egui::Slider::new(&mut self.spacing, 2.0..=4.0)
-                    .clamp_to_range(false),
-            );
-            ui.label("Pulse Train");
-            ui.add(
-                egui::Slider::new(&mut self.pulsetrain, 1..=10)
-                    .clamp_to_range(false),
-            );
-            ui.label("Pulse Duration (ms)");
-            ui.add(
-                egui::Slider::new(&mut self.pulseduration, 2.4..=20.0)
-                    .clamp_to_range(false),
-            );
-            ui.label("Repetition Time (s)");
-            ui.add(egui::Slider::new(&mut self.reptime, 0.00..=10.00));
-            ui.label("# of Repetitions");
-            ui.add(
-                egui::Slider::new(&mut self.cycles, 1..=200)
-                    .clamp_to_range(false),
-            );
-            let ejs = self.power as f64
-                * (self.pulseduration * 1e-3)
-                * self.pulsetrain as f64
-                * self.cycles as f64;
-            let totduration = self.reptime * self.cycles as f64;
-            let dutycycle =
-                ((self.pulsetrain as f64 * (self.pulseduration * 1e-3) * self.subspots as f64)
-                    / self.reptime)
-                    * 100.0;
-            let recphase = ((self.reptime
-                - (self.pulsetrain as f64 * (self.pulseduration * 1e-3) * self.subspots as f64))
-                / (self.pulsetrain as f64 * self.subspots as f64))
-                * 1000.0;
-            let period = (((self.reptime
-                - (self.pulsetrain as f64 * (self.pulseduration * 1e-3) * self.subspots as f64))
-                / (self.pulsetrain as f64 * self.subspots as f64))
-                * 1000.0)
-                + self.pulseduration;
-            let dts =
-                ((self.pulsetrain as f64 * (self.pulseduration * 1e-3)) / self.reptime) * 100.0;
-            let targetvol = self.spacing * 0.1 * self.spacing * 0.1 * 0.7 * self.subspots as f64;
-            let epm = ejs / (self.spacing * self.spacing * 7.0);
-            let prf = (self.subspots as f64 * self.pulsetrain as f64) / self.reptime;
-            let current_time = Local::now();
-            let new_row = vec![
-                                format!("{}", self.sonication_number),
-                                format!("{}", current_time.format("%Y-%m-%d\n%H:%M:%S")),
-                                format!("{}", self.power),
-                                format!("{}", self.subspots),
-                                format!("{}", self.spacing),
-                                format!("{}", self.pulsetrain),
-                                format!("{}", self.pulseduration),
-                                format!("{}", self.reptime),
-                                format!("{}", self.cycles),
-                                format!("{:.2}", ejs),
-                                format!("{:.2}", targetvol),
-                                format!("{:.1}", epm),
-                                format!("{:.1}", totduration),
-                                format!("{:.1}", prf),
-                                format!("{:.2}", recphase),
-                                format!("{:.2}", period),
-                                format!("{:.1}", dutycycle),
-                                format!("{:.1}", dts),
-                            ];
-            // Create a Grid widget to display the grid
-            egui::Grid::new("sonication_grid")
-                .spacing(egui::vec2(8.0, 8.0))
-                .show(ui, |ui| {
-                // Add data rows to the grid
-                for row in &self.grid_data {
-                    for cell in row {
-                        ui.label(cell);
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let ejs = self.power as f64
+                    * (self.pulseduration * 1e-3)
+                    * self.pulsetrain as f64
+                    * self.cycles as f64;
+                let totduration = self.reptime * self.cycles as f64;
+                let dutycycle =
+                    ((self.pulsetrain as f64 * (self.pulseduration * 1e-3) * self.subspots as f64)
+                        / self.reptime)
+                        * 100.0;
+                let recphase = ((self.reptime
+                    - (self.pulsetrain as f64 * (self.pulseduration * 1e-3) * self.subspots as f64))
+                    / (self.pulsetrain as f64 * self.subspots as f64))
+                    * 1000.0;
+                let period = (((self.reptime
+                    - (self.pulsetrain as f64 * (self.pulseduration * 1e-3) * self.subspots as f64))
+                    / (self.pulsetrain as f64 * self.subspots as f64))
+                    * 1000.0)
+                    + self.pulseduration;
+                let dts =
+                    ((self.pulsetrain as f64 * (self.pulseduration * 1e-3)) / self.reptime) * 100.0;
+                let targetvol = self.spacing * 0.1 * self.spacing * 0.1 * 0.7 * self.subspots as f64;
+                let epm = ejs / (self.spacing * self.spacing * 7.0);
+                let prf = (self.subspots as f64 * self.pulsetrain as f64) / self.reptime;
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().slider_width = 0.4*ui.available_width();
+                        ui.add(
+                            egui::Slider::new(&mut self.power, 0.0..=100.0)
+                                .text(RichText::new("Power (W)").size(20.0))
+                                .clamp_to_range(false),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut self.subspots, 1..=64)
+                                .text(RichText::new("# of Subspots").size(20.0))
+                                .clamp_to_range(false),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut self.spacing, 2.0..=4.0)
+                                .text(RichText::new("Subspot Spacing").size(20.0))
+                                .clamp_to_range(false),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut self.pulsetrain, 1..=10)
+                                .text(RichText::new("Pulse Train").size(20.0))
+                                .clamp_to_range(false),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut self.pulseduration, 2.4..=20.0)
+                                .text(RichText::new("Pulse Duration (ms)").size(20.0))
+                                .clamp_to_range(false),
+                        );
+                        ui.add(egui::Slider::new(&mut self.reptime, 0.00..=10.00)
+                                    .text(RichText::new("Repetition Time (s)").size(20.0))
+                                    .clamp_to_range(false));
+                        ui.add(
+                            egui::Slider::new(&mut self.cycles, 1..=200)
+                                .text(RichText::new("# of Repetitions").size(20.0))
+                                .clamp_to_range(false),
+                        );
+                    });
+                    ui.vertical(|ui| {
+                        let color = match (period < 4.0, dutycycle > 0.75, recphase < 1.6) {
+                            (true, _, _) | (_, true, _) | (_, _, true) => Color32::RED,
+                            _ => Color32::BLACK,
+                        };
+                        ui.label(RichText::new(format!("Duty Cycle {:.2} %", dutycycle)).size(20.0).color(color).underline());
+                        ui.label(RichText::new(format!("Duty Cycle per Subspot {:.2} %", dts)).size(20.0).color(color).underline());
+                        ui.label(RichText::new(format!("Energy per Subspot {:.2} %", ejs)).size(20.0).color(color).underline());
+                        ui.label(RichText::new(format!("Pulse Repetition Frequency {:.2}", prf)).size(20.0).color(color).underline());
+                        ui.label(RichText::new(format!("Period {:.2}", period)).size(20.0).color(color).underline());
+                        ui.label(RichText::new(format!("Receiver Phase {:.2}", recphase)).size(20.0).color(color).underline());
+                    });
+
+                });
+                let current_time = Local::now();
+                let new_row = vec![
+                                    format!("{}", self.sonication_number),
+                                    format!("{}", current_time.format("%Y-%m-%d\n%H:%M:%S")),
+                                    format!("{}", self.power),
+                                    format!("{}", self.subspots),
+                                    format!("{}", self.spacing),
+                                    format!("{}", self.pulsetrain),
+                                    format!("{:.2}", self.pulseduration),
+                                    format!("{:.2}", self.reptime),
+                                    format!("{:.2}", self.cycles),
+                                    format!("{:.2}", ejs),
+                                    format!("{:.2}", targetvol),
+                                    format!("{:.1}", epm),
+                                    format!("{:.1}", totduration),
+                                    format!("{:.1}", prf),
+                                    format!("{:.2}", recphase),
+                                    format!("{:.2}", period),
+                                    format!("{:.1}", dutycycle),
+                                    format!("{:.1}", dts),
+                                ];
+                // Create a Grid widget to display the grid
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
+
+                    egui::Grid::new("sonication_grid")
+                        .spacing(egui::vec2(8.0, 10.0))
+                        .show(ui, |ui| {
+                        // Add data rows to the grid
+                        for row in &self.grid_data {
+                            for cell in row {
+                                ui.label(cell);
+                            }
+                            ui.end_row();
+                        }
+                        // Add new_row to the grid
+                        for cell in &new_row {
+                            ui.label(cell);
+                        }
+                        ui.end_row();
+                    });
+                    if ui.button("Save").clicked() {
+                        self.grid_data.push(new_row.clone());
+                        self.sonication_number += 1;
+                    };
+                    ui.add(egui::TextEdit::singleline(&mut self.summaryname));
+                    if ui.button("Export").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .set_file_name("Select a folder")
+                            .pick_folder() {
+                                let path =Path::new(&path);
+                                let file = File::create(path.join(&self.summaryname)).expect("could not create file");
+                                let mut wtr = Writer::from_writer(file);
+
+                                for row in &self.grid_data {
+                                    wtr.write_record(row).expect("csv write failed");
+                                }
+
+                                wtr.flush().expect("failed to close");
+                            }
                     }
-                    ui.end_row();
-                }
-                // Add new_row to the grid
-                for cell in &new_row {
-                    ui.label(cell);
-                }
-                ui.end_row();
+                });
             });
-            if ui.button("Save").clicked() {
-                self.grid_data.push(new_row.clone());
-                self.sonication_number += 1;
-            }
         });
     }
 
     #[inline(always)]
     fn show_dicom_ui(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            if ui.button("Select folder").clicked() {
-                if let Some(path) = rfd::FileDialog::new()
-                    .set_file_name("Select a folder")
-                    .pick_folder() {
-                    self.selected_folder = Some(path);
-                };
+            ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
 
+                if ui.button(RichText::new("Select folder")).clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_file_name("Select a folder")
+                        .pick_folder() {
+                        self.selected_folder = Some(path);
+                    };
+
+
+                    if let Some(ref folder) = self.selected_folder {
+                        let path = Path::new(folder);
+
+                        let mut objects: Vec<_> = WalkDirGeneric::<(u32, bool)>::new(path)
+                            .process_read_dir(|_depth, _path, read_dir_state, _children| {
+                                *read_dir_state += 1;
+                            })
+                            .into_iter()
+                            .filter_map(Result::ok)
+                            .filter(is_dicom)
+                            .filter_map(to_dicom)
+                            .collect();
+
+                        objects.into_par_iter().for_each(|(object, file)| {
+                            if let Ok(series_instance_uid) = object.element(Tag(0x0020, 0x000E)) {
+                                if let Ok(uid) = series_instance_uid.to_str() {
+                                    let mut series = self.presorted.entry(uid.to_string()).or_insert(Vec::new());
+                                    series.push((object, file));
+                                    series.par_sort_by(|(a, _), (b, _)| {
+                                        let image_position_patient_a = get_image_position(a);
+                                        let image_position_patient_b = get_image_position(b);
+                                        image_position_patient_a
+                                            .partial_cmp(&image_position_patient_b)
+                                            .unwrap_or(Ordering::Equal)
+                                    });
+                                }
+                            }
+                        });
+                    };
+                };
 
                 if let Some(ref folder) = self.selected_folder {
                     let path = Path::new(folder);
-
-                    let mut objects: Vec<_> = WalkDirGeneric::<(u32, bool)>::new(path)
-                        .process_read_dir(|_depth, _path, read_dir_state, _children| {
-                            *read_dir_state += 1;
-                        })
-                        .into_iter()
-                        .filter_map(Result::ok)
-                        .filter(is_dicom)
-                        .filter_map(to_dicom)
-                        .collect();
-
-                    objects.into_par_iter().for_each(|(object, file)| {
-                        if let Ok(series_instance_uid) = object.element(Tag(0x0020, 0x000E)) {
-                            if let Ok(uid) = series_instance_uid.to_str() {
-                                let mut series = self.presorted.entry(uid.to_string()).or_insert(Vec::new());
-                                series.push((object, file));
-                                series.par_sort_by(|(a, _), (b, _)| {
-                                    let image_position_patient_a = get_image_position(a);
-                                    let image_position_patient_b = get_image_position(b);
-                                    image_position_patient_a
-                                        .partial_cmp(&image_position_patient_b)
-                                        .unwrap_or(Ordering::Equal)
-                                });
-                            }
-                        }
-                    });
-                };
-            };
-
-            if let Some(ref _folder) = self.selected_folder {
-                // Print the series and number of images
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    egui::SidePanel::right("side_panel").show(ui.ctx(), |ui| {
-                        ui.label("Series and number of images:");
-                        let mut selected_series = None;
-                        egui::ComboBox::from_id_source("my_combo_box")
-                            .selected_text(self.selected_uid.clone())
-                            .width(ui.available_width()) // Set the width here
-                            .show_ui(ui, |ui| {
-                                for entry in &self.presorted {
-                                    let series = entry.key();
-                                    let count = entry.value().len();
-                                    ui.selectable_value(&mut selected_series, Some(series.to_string()), format!("{}: {}", series, count));
-                                }
-                            });
-                        if let Some(selected) = selected_series {
-                            self.selected_uid = selected;
-                            self.current_image_index = 1;
-                        };
-                        if let Some(images) = self.presorted.get(&self.selected_uid) {
-                            ui.horizontal(|ui| {
-
-                                let (dicom_object, path) = &images[self.current_image_index - 1];
-                                // Display the image from dicom_object
-                                let pixel_data = &dicom_object.decode_pixel_data().unwrap();
-                                let size = [pixel_data.rows() as _, pixel_data.columns() as _];
-                                let dynamic_image = pixel_data.to_dynamic_image(0).unwrap().to_rgba8();
-                                let pixels = dynamic_image.as_flat_samples();
-                                let image = ColorImage::from_rgba_unmultiplied(size,pixels.as_slice());
-                                let texture_options = egui::TextureOptions::default(); // or any other options you want to set
-                                let texture: &egui::TextureHandle = &ui.ctx().load_texture("0", image, texture_options);
-                                ui.image(texture);
-                                ui.spacing_mut().slider_width = ui.available_height();
-                                ui.add(egui::Slider::new(&mut self.current_image_index, 1..=images.len())
-                                    .orientation(SliderOrientation::Vertical)
-                                    .text("Image index"),
-                                );
-                            });
-
-                        };
-                    });
-                });
-
-    
-
-                if ui.button("Move sorted dicoms").clicked() {
-                    if let Some(ref folder) = self.selected_folder {
-                        let path = Path::new(folder);
+                    if ui.button("Move sorted dicoms").clicked() {
 
                         if let Some(objects) = self.presorted.get(&self.selected_uid) {
                             let new_dir = path.join(format!("processed/sorted/{}", &self.selected_uid));
@@ -548,11 +554,8 @@ impl MyEguiApp {
                             });
                         }
                     };
-                };
-                if ui.button("Anonymize and save dicoms").clicked() {
-                    // Anonymize each object in parallel using rayon
-                    if let Some(ref folder) = self.selected_folder {
-                        let path = Path::new(folder);
+                    if ui.button("Anonymize and save dicoms").clicked() {
+                        // Anonymize each object in parallel using rayon
                         let tags_to_anonymize: HashSet<Tag> = [
                             Tag(0x0008, 0x0014), // Instance Creator UID
                             Tag(0x0008, 0x0018), // SOP Instance UID
@@ -606,7 +609,52 @@ impl MyEguiApp {
                         });
                     }
                 };
-            }
+            });
+                // Print the series and number of images
+                if let Some(ref _folder) = self.selected_folder {
+
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        egui::SidePanel::right("side_panel").show(ui.ctx(), |ui| {
+                            ui.label(RichText::new("Series and number of images:").size(25.0));
+                            let mut selected_series = None;
+                            egui::ComboBox::from_id_source("my_combo_box")
+                                .selected_text(self.selected_uid.clone())
+                                .width(ui.available_width()) // Set the width here
+                                .show_ui(ui, |ui| {
+                                    for entry in &self.presorted {
+                                        let series = entry.key();
+                                        let count = entry.value().len();
+                                        ui.selectable_value(&mut selected_series, Some(series.to_string()), format!("{}: {}", series, count));
+                                    }
+                                });
+                            if let Some(selected) = selected_series {
+                                self.selected_uid = selected;
+                                self.current_image_index = 1;
+                            };
+                            if let Some(images) = self.presorted.get(&self.selected_uid) {
+                                ui.horizontal(|ui| {
+
+                                    let (dicom_object, path) = &images[self.current_image_index - 1];
+                                    // Display the image from dicom_object
+                                    let pixel_data = &dicom_object.decode_pixel_data().unwrap();
+                                    let size = [pixel_data.rows() as _, pixel_data.columns() as _];
+                                    let dynamic_image = pixel_data.to_dynamic_image(0).unwrap().to_rgba8();
+                                    let pixels = dynamic_image.as_flat_samples();
+                                    let image = ColorImage::from_rgba_unmultiplied(size,pixels.as_slice());
+                                    let texture_options = egui::TextureOptions::default(); // or any other options you want to set
+                                    let texture: &egui::TextureHandle = &ui.ctx().load_texture("0", image, texture_options);
+                                    ui.image(texture);
+                                    ui.spacing_mut().slider_width = ui.available_height();
+                                    ui.add(egui::Slider::new(&mut self.current_image_index, 1..=images.len())
+                                        .orientation(SliderOrientation::Vertical)
+                                        .text("Image index"),
+                                    );
+                                });
+
+                            };
+                        });
+                    });
+                }
         });
     }
 }
@@ -618,15 +666,15 @@ impl eframe::App for MyEguiApp {
             menu::bar(ui, |ui| {
                 ui.horizontal(|ui| {
                     
-                    ui.menu_button("View", |ui| {
+                    ui.menu_button(RichText::new("View").size(15.0), |ui| {
                         egui::gui_zoom::zoom_menu_buttons(ui, frame.info().native_pixels_per_point);
                     });
                     ui.separator();
-                    ui.menu_button("Contrast", |ui| {
+                    ui.menu_button(RichText::new("Contrast").size(15.0), |ui| {
                         egui::widgets::global_dark_light_mode_buttons(ui);
                     });
                     ui.separator();
-                    ui.menu_button("Mode", |ui| {
+                    ui.menu_button(RichText::new("Mode").size(15.0), |ui| {
                         ui.vertical(|ui| {
                             if ui.button("Parameter Calculator").clicked() {
                                 self.show_mode = "parameters".into()

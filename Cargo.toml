@@ -13,7 +13,7 @@ env_logger = "0.10.0"
 image = { version = "0.24", features = ["jpeg", "png"] } # Add the types you want support for
 rfd = "0.12.0"
 snmalloc-rs = { version = "0.3.4", features = ["usecxx17", "build_cc"] }
-polars = { version = "0.33.2", features = ["lazy","strings","cum_agg","timezones","temporal","dtype-datetime","dtype-duration","dtype-date", "dtype-time"]}
+polars = { version = "0.33.2", features = ["lazy","strings","cum_agg","timezones","temporal","dtype-datetime","dtype-duration","dtype-date", "dtype-time","diff"]}
 anyhow = "1.0.75"
 dashmap = { version = "5.5.3", features = ["rayon", "inline"] }
 dicom = "0.6.1"
@@ -26,6 +26,7 @@ ndarray = "0.15.6"
 zip = "0.6.6"
 egui-notify = "0.10.0"
 chrono = "0.4.31"
+csv = "1.3.0"
 
 [profile.release]
 lto = "thin"
