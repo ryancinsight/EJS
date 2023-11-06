@@ -1,5 +1,8 @@
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static,+sse3,+avx","-C", "link-arg=-fuse-ld=ld.lld"]
 
 [build]
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+rustflags = ["-C", "link-arg=-fuse-ld=ld.lld"]
+
+[rust]
+lld=true
