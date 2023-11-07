@@ -44,11 +44,11 @@ fn get_image_position(obj: &InMemDicomObject) -> Option<f64> {
 }
 //Define distance function from Natural Focus
 #[inline(always)]
-fn distance(vec1: &Vec<f64>, vec2: &Vec<f64>) -> f64 {
-    let x_diff = vec1[0] - vec2[0];
-    let y_diff = vec1[1] - vec2[1];
-    let z_diff = vec1[2] - vec2[2];
-    (x_diff.powi(2) + y_diff.powi(2) + z_diff.powi(2)).sqrt()
+fn distance(vec1: &[f64], vec2: &[f64]) -> f64 {
+    vec1.iter().zip(vec2.iter())
+        .map(|(&a, &b)| (a - b).powi(2))
+        .sum::<f64>()
+        .sqrt()
 }
 // Define the Gaussian function
 #[inline(always)]
@@ -209,10 +209,10 @@ fn extract_zip(path: &Path, dir_path: &Path) -> Result<(), Box<dyn Error>> {
     }
 
     // Write all files at once
-    map.iter().try_for_each(|entry| {
+    map.par_iter().for_each(|entry| {
         let (outpath, buffer) = entry.pair();
-        std::fs::write(outpath, buffer).map_err(|e| Box::new(e) as Box<dyn Error>)
-    })?;
+        std::fs::write(outpath, buffer).map_err(|e| Box::new(e) as Box<dyn Error>).expect("REASON")
+    });
 
     Ok(())
 }
@@ -270,6 +270,9 @@ impl MyEguiApp {
             grid_data: vec![vec![
                 "Son.\n (#)".to_string(),
                 "Time".to_string(),
+                "Natural\nFocus\nRAS".to_string(),
+                "Target\nRAS".to_string(),
+                "Adjusted\nPower\n(W)".to_string(),
                 "Power\n (W)".to_string(),
                 "foci\n (#)".to_string(),
                 "spacing\n (mm)".to_string(),
@@ -277,9 +280,10 @@ impl MyEguiApp {
                 "P.Dur\n (ms)".to_string(),
                 "Rep\nTime\n (s)".to_string(),
                 "Reps\n (#)".to_string(),
-                "En.foci\n (J/spot)".to_string(),
+                "Adj.\nEner.\nfoci\n(J/spot)".to_string(),
+                "Ener\nfoci\n (J/spot)".to_string(),
                 "Tar\n Vol\n (mm3)".to_string(),
-                "En.Vol\n (J/mm3)".to_string(),
+                "Ener\nVol\n (J/mm3)".to_string(),
                 "Accum\nVol\n (mm3)".to_string(),
                 "Son.Dur\n (s)".to_string(),
                 "PRF\n (Hz)".to_string(),
@@ -566,13 +570,17 @@ impl MyEguiApp {
             let new_row = vec![
                 format!("{}", self.sonication_number),
                 format!("{}", current_time.format("%Y-%m-%d\n%H:%M:%S")),
-                format!("{}", self.power),
+                format!("{:#?}",self.natural_focus),
+                format!("{:#?}",self.target),
+                format!("{:.1}",self.power*self.efficiency/100.0),
+                format!("{:.1}", self.power),
                 format!("{}", self.subspots),
-                format!("{}", self.spacing),
+                format!("{:.1}", self.spacing),
                 format!("{}", self.pulsetrain),
                 format!("{:.2}", self.pulseduration),
                 format!("{:.2}", self.reptime),
                 format!("{:.2}", self.cycles),
+                format!("{:.2}",ejs*self.efficiency/100.0),
                 format!("{:.2}", ejs),
                 format!("{:.2}", targetvol),
                 format!("{:.1}", epm),
@@ -593,16 +601,16 @@ impl MyEguiApp {
                             .spacing(egui::vec2(8.0, 10.0))
                             .show(ui, |ui| {
                                 // Add data rows to the grid
-                                for row in &self.grid_data {
-                                    for cell in row {
+                                self.grid_data.iter().for_each(|row| {
+                                    row.iter().for_each(|cell| {
                                         ui.label(cell);
-                                    }
+                                    });
                                     ui.end_row();
-                                }
+                                });
                                 // Add new_row to the grid
-                                for cell in &new_row {
+                                new_row.iter().for_each(|cell| {
                                     ui.label(cell);
-                                }
+                                });
                                 ui.end_row();
                             });
                         if ui.button("Save").clicked() {
