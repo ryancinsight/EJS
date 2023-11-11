@@ -3,9 +3,9 @@
 extern crate winres;
 
 fn main() {
-  if cfg!(target_os = "windows") {
     let mut res = winres::WindowsResource::new();
-    res.set_icon("src/sona.ico");
+    res.set_icon("src/sona.ico")
+        .set("InternalName", "SONA.EXE")
+        .set("CompanyName", "SonALAsense");
     res.compile().unwrap();
-  }
 }

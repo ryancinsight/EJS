@@ -1,8 +1,10 @@
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static,+sse3,+avx","-C", "link-arg=-fuse-ld=ld.lld"]
+rustflags = ["-C", "debuginfo=0","-C", "target-feature=+crt-static,+sse3,+avx,+avx2,+tbm","-C", "link-arg=-fuse-ld=lld","-C","target-cpu=native","-C", "llvm-args=-enable-tbaa","-C", "llvm-args=-vectorize-loops", "-C", "llvm-args=-vectorize-slp","-Z","tune-cpu=native" ]
 
-[build]
-rustflags = ["-C", "link-arg=-fuse-ld=ld.lld"]
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "debuginfo=0","-C", "target-feature=+crt-static,+sse3,+avx,+avx2,+tbm","-C", "link-arg=-fuse-ld=lld","-C","target-cpu=native","-C", "llvm-args=-enable-tbaa","-C", "llvm-args=-vectorize-loops", "-C", "llvm-args=-vectorize-slp"]
+
+
 
 [rust]
 lld=true

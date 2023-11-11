@@ -15,7 +15,6 @@ dependencies = [
  "dicom-object",
  "dicom-pixeldata",
  "eframe",
- "egui",
  "egui-notify",
  "egui_extras",
  "env_logger",

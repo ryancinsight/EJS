@@ -2,19 +2,19 @@
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 use anyhow::Result;
-use dashmap::{DashMap,DashSet};
+use chrono::prelude::*;
+use csv::Writer;
+use dashmap::{DashMap, DashSet};
 use dicom::{
     dictionary_std,
     object::{open_file, FileDicomObject, InMemDicomObject, OpenFileOptions, Tag},
 };
 use dicom_pixeldata::PixelDecoder;
 use eframe::egui::{self, menu, Color32, ColorImage, Grid, RichText, SliderOrientation};
-use splines::{Interpolation, Key, Spline};
-use chrono::prelude::*;
-use csv::Writer;
 use jwalk::{DirEntry, WalkDirGeneric};
 use polars::prelude::*;
 use rayon::prelude::*;
+use splines::{Interpolation, Key, Spline};
 use std::collections::HashSet;
 use std::{
     cmp::Ordering,
@@ -45,7 +45,8 @@ fn get_image_position(obj: &InMemDicomObject) -> Option<f64> {
 //Define distance function from Natural Focus
 #[inline(always)]
 fn distance(vec1: &[f64], vec2: &[f64]) -> f64 {
-    vec1.iter().zip(vec2.iter())
+    vec1.iter()
+        .zip(vec2.iter())
         .map(|(&a, &b)| (a - b).powi(2))
         .sum::<f64>()
         .sqrt()
@@ -75,7 +76,7 @@ fn main() -> Result<(), eframe::Error> {
         always_on_top: false,
         maximized: false,
         decorated: true,
-        drag_and_drop_support: true,
+        drag_and_drop_support: false,
         initial_window_pos: None,
         initial_window_size: Some(egui::vec2(1024.0, 512.0)),
         min_window_size: None,
@@ -93,7 +94,9 @@ fn main() -> Result<(), eframe::Error> {
     )
 }
 #[inline(always)]
-fn process_dicom<WalkDirError>(entry: Result<DirEntry<(u32, bool)>, WalkDirError>) -> Option<(FileDicomObject<InMemDicomObject>, PathBuf)> {
+fn process_dicom<WalkDirError>(
+    entry: Result<DirEntry<(u32, bool)>, WalkDirError>,
+) -> Option<(FileDicomObject<InMemDicomObject>, PathBuf)> {
     if let Ok(entry) = entry {
         if entry.file_type().is_file() {
             let path = entry.path().to_path_buf();
@@ -149,7 +152,7 @@ fn read_csv_file(path: &Path) -> PolarsResult<DataFrame> {
             "Focal RAS-A",
             "Focal RAS-S",
             "Acoustic mode(1-disabled/2-Stop sonication/3-Modulated power)",
-            "Protocol Name"
+            "Protocol Name",
         ])
         .collect()
         .expect("failed to modify");
@@ -211,13 +214,17 @@ fn extract_zip(path: &Path, dir_path: &Path) -> Result<(), Box<dyn Error>> {
     // Write all files at once
     map.par_iter().for_each(|entry| {
         let (outpath, buffer) = entry.pair();
-        std::fs::write(outpath, buffer).map_err(|e| Box::new(e) as Box<dyn Error>).expect("REASON")
+        std::fs::write(outpath, buffer)
+            .map_err(|e| Box::new(e) as Box<dyn Error>)
+            .expect("REASON")
     });
 
     Ok(())
 }
 #[derive(Default)]
 struct MyEguiApp {
+    allowed_to_close: bool,
+    show_confirmation_dialog: bool,
     power: f64,
     subspots: i32,
     spacing: f64,
@@ -225,7 +232,6 @@ struct MyEguiApp {
     pulseduration: f64,
     reptime: f64,
     cycles: i32,
-    totalvol: f64,
     show_mode: Box<str>,
     filepath: Option<PathBuf>,
     df: Option<DataFrame>,
@@ -236,7 +242,6 @@ struct MyEguiApp {
     presorted: DashMap<String, Vec<(FileDicomObject<InMemDicomObject>, PathBuf)>>,
     current_image_index: usize,
     extract_images: bool,
-    sonication_number: i32,
     grid_data: Vec<Vec<String>>,
     natural_focus: Vec<f64>,
     target: Vec<f64>,
@@ -248,6 +253,8 @@ impl MyEguiApp {
     #[inline(always)]
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         Self {
+            allowed_to_close: false,
+            show_confirmation_dialog: false,
             power: 10.0,
             subspots: 32,
             spacing: 3.0,
@@ -255,18 +262,16 @@ impl MyEguiApp {
             pulseduration: 2.4,
             reptime: 1.00,
             cycles: 100,
-            totalvol: 0.0,
             show_mode: "parameters".into(),
             filepath: None,
             df: None,
             selected_uid: String::new(),
             summaryname: "summary.csv".to_string(),
-            selected_folder: None,     // Add this line
+            selected_folder: None, // Add this line
             unique_ids: DashSet::new(),
             presorted: DashMap::new(), // Add this line
             current_image_index: 1,
             extract_images: true,
-            sonication_number: 1,
             grid_data: vec![vec![
                 "Son.\n (#)".to_string(),
                 "Time".to_string(),
@@ -292,12 +297,13 @@ impl MyEguiApp {
                 "DC\n (%)".to_string(),
                 "DCPS \n (%)".to_string(),
             ]],
-            natural_focus: vec![0.0,0.0,0.0],
-            target: vec![0.0,0.0,0.0],
+            natural_focus: vec![0.0, 0.0, 0.0],
+            target: vec![0.0, 0.0, 0.0],
             distance: 0.0,
-            efficiency: 100.0
+            efficiency: 100.0,
         }
     }
+
     #[inline(always)]
     fn show_summary_ui(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -338,7 +344,7 @@ impl MyEguiApp {
                             // Extract BMP images from zip files in the same directory
                             if self.extract_images {
                                 extract_zip(path.as_path(), &dir_path).unwrap();
-                            }
+                            };
                         }
                     };
                 },
@@ -401,7 +407,9 @@ impl MyEguiApp {
                 egui::ScrollArea::both().show(ui, |ui| {
                     Grid::new("dataframe_grid").show(ui, |ui| {
                         // Add column names to the grid
-                        df.get_column_names().iter().for_each(|name| { ui.label(*name); });
+                        df.get_column_names().iter().for_each(|name| {
+                            ui.label(*name);
+                        });
                         ui.end_row();
 
                         // Add values to the grid
@@ -420,6 +428,7 @@ impl MyEguiApp {
     #[inline(always)]
     fn show_parameter_ui(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
+            
             let ejs = self.power as f64
                 * (self.pulseduration * 1e-3)
                 * self.pulsetrain as f64
@@ -455,9 +464,12 @@ impl MyEguiApp {
                             ui.label(RichText::new("z:").size(20.0));
                             ui.add(egui::DragValue::new(&mut self.natural_focus[2]));
                             ui.label(
-                                RichText::new(format!("Adjusted Power {:.2} (W)", self.power*self.efficiency/100.0))
-                                    .size(20.0)
-                                    .underline(),
+                                RichText::new(format!(
+                                    "Adjusted Power {:.2} (W)",
+                                    self.power * self.efficiency / 100.0
+                                ))
+                                .size(20.0)
+                                .underline(),
                             );
                             ui.label(
                                 RichText::new(format!("Distance {:.2} mm", self.distance))
@@ -473,9 +485,12 @@ impl MyEguiApp {
                             ui.label(RichText::new("z:").size(20.0));
                             ui.add(egui::DragValue::new(&mut self.target[2]));
                             ui.label(
-                                RichText::new(format!("Adjusted Energy per Subspot {:.2} J/spot", ejs*self.efficiency/100.0))
-                                    .size(20.0)
-                                    .underline(),
+                                RichText::new(format!(
+                                    "Adjusted Energy per Subspot {:.2} J/spot",
+                                    ejs * self.efficiency / 100.0
+                                ))
+                                .size(20.0)
+                                .underline(),
                             );
                             ui.label(
                                 RichText::new(format!("Efficiency {:.2} %", self.efficiency))
@@ -483,7 +498,7 @@ impl MyEguiApp {
                                     .underline(),
                             );
                         });
-                        self.distance = distance(&self.natural_focus,&self.target);
+                        self.distance = distance(&self.natural_focus, &self.target);
                         self.efficiency = efficiency(self.distance);
                         ui.add(
                             egui::Slider::new(&mut self.power, 0.0..=100.0)
@@ -563,16 +578,28 @@ impl MyEguiApp {
                                 .color(color)
                                 .underline(),
                         );
+                        ui.label(
+                            RichText::new(format!("Total Duration {:.2} s", totduration))
+                                .size(20.0)
+                                .color(color)
+                                .underline(),
+                        );
                     });
                 });
             });
             let current_time = Local::now();
+            let son: i32 = self.grid_data.last().unwrap_or(&vec!["0".to_string()])[0]
+                .parse()
+                .unwrap_or(0);
+            let sonvol: f64 = self.grid_data.last().unwrap_or(&vec!["0.0".to_string()])[16]
+                .parse()
+                .unwrap_or(0.0);
             let new_row = vec![
-                format!("{}", self.sonication_number),
+                format!("{}", son + 1),
                 format!("{}", current_time.format("%Y-%m-%d\n%H:%M:%S")),
-                format!("{:#?}",self.natural_focus),
-                format!("{:#?}",self.target),
-                format!("{:.1}",self.power*self.efficiency/100.0),
+                format!("{:#?}", self.natural_focus),
+                format!("{:#?}", self.target),
+                format!("{:.1}", self.power * self.efficiency / 100.0),
                 format!("{:.1}", self.power),
                 format!("{}", self.subspots),
                 format!("{:.1}", self.spacing),
@@ -580,11 +607,11 @@ impl MyEguiApp {
                 format!("{:.2}", self.pulseduration),
                 format!("{:.2}", self.reptime),
                 format!("{:.2}", self.cycles),
-                format!("{:.2}",ejs*self.efficiency/100.0),
+                format!("{:.2}", ejs * self.efficiency / 100.0),
                 format!("{:.2}", ejs),
                 format!("{:.2}", targetvol),
                 format!("{:.1}", epm),
-                format!("{:.2}", self.totalvol + targetvol),
+                format!("{:.2}", sonvol + targetvol),
                 format!("{:.1}", totduration),
                 format!("{:.1}", prf),
                 format!("{:.2}", recphase),
@@ -613,10 +640,13 @@ impl MyEguiApp {
                                 });
                                 ui.end_row();
                             });
-                        if ui.button("Save").clicked() {
+                        if ui.button("Save Row").clicked() {
                             self.grid_data.push(new_row);
-                            self.sonication_number += 1;
-                            self.totalvol += targetvol;
+                        };
+                        if ui.button("Delete Row").clicked() {
+                            let son: i32 = self.grid_data.last().unwrap()[0].parse().unwrap();
+                            println!("{:#?}", son + 1);
+                            self.grid_data.pop();
                         };
                         ui.add(egui::TextEdit::singleline(&mut self.summaryname));
                         if ui.button("Export").clicked() {
@@ -627,7 +657,7 @@ impl MyEguiApp {
                                 let path = Path::new(&path);
                                 let file = File::create(path.join(&self.summaryname))
                                     .expect("could not create file");
-                                
+
                                 let mut wtr = Writer::from_writer(file);
 
                                 for row in &self.grid_data {
@@ -683,7 +713,6 @@ impl MyEguiApp {
                         ui.image(texture);
                         ui.spacing_mut().slider_width = ui.available_height();
                         ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-
                             ui.add(
                                 egui::Slider::new(&mut self.current_image_index, 1..=images.len())
                                     .orientation(SliderOrientation::Vertical)
@@ -696,7 +725,10 @@ impl MyEguiApp {
         };
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-                if ui.button(RichText::new("Select folder").size(25.0)).clicked() {
+                if ui
+                    .button(RichText::new("Select folder").size(25.0))
+                    .clicked()
+                {
                     if let Some(path) = rfd::FileDialog::new()
                         .set_file_name("Select a folder")
                         .pick_folder()
@@ -711,22 +743,28 @@ impl MyEguiApp {
                             .process_read_dir(|_depth, _path, read_dir_state, _children| {
                                 *read_dir_state += 1;
                             })
-                            .try_into_iter().expect("Cannot Make Iterator")
+                            .try_into_iter()
+                            .expect("Cannot Make Iterator")
                             .filter_map(process_dicom)
                             .collect();
 
                         objects.into_par_iter().for_each(|(object, file)| {
                             if let Ok(series_instance_uid) = object.element(Tag(0x0020, 0x000E)) {
                                 if let Ok(uid) = series_instance_uid.to_str() {
-                                    let mut series = self.presorted.entry(uid.to_string()).or_default();
+                                    let mut series =
+                                        self.presorted.entry(uid.to_string()).or_default();
                                     // Assuming `sop_instance_uid` is a unique identifier for each DICOM object
-                                    if let Ok(sop_instance_uid) = object.element(Tag(0x0008, 0x0018)) {
+                                    if let Ok(sop_instance_uid) =
+                                        object.element(Tag(0x0008, 0x0018))
+                                    {
                                         if let Ok(sop_id) = sop_instance_uid.to_str() {
                                             if self.unique_ids.insert(sop_id.to_string()) {
                                                 series.push((object, file));
                                                 series.par_sort_by(|(a, _), (b, _)| {
-                                                    let image_position_patient_a = get_image_position(a);
-                                                    let image_position_patient_b = get_image_position(b);
+                                                    let image_position_patient_a =
+                                                        get_image_position(a);
+                                                    let image_position_patient_b =
+                                                        get_image_position(b);
                                                     image_position_patient_a
                                                         .partial_cmp(&image_position_patient_b)
                                                         .unwrap_or(Ordering::Equal)
@@ -742,7 +780,10 @@ impl MyEguiApp {
 
                 if let Some(ref folder) = self.selected_folder {
                     let path = Path::new(folder);
-                    if ui.button(RichText::new("Move sorted dicoms").size(25.0)).clicked() {
+                    if ui
+                        .button(RichText::new("Move sorted dicoms").size(25.0))
+                        .clicked()
+                    {
                         if let Some(objects) = self.presorted.get(&self.selected_uid) {
                             let new_dir =
                                 path.join(format!("processed/sorted/{}", &self.selected_uid));
@@ -774,7 +815,10 @@ impl MyEguiApp {
                             });
                         }
                     };
-                    if ui.button(RichText::new("Anonymize and save dicoms").size(25.0)).clicked() {
+                    if ui
+                        .button(RichText::new("Anonymize and save dicoms").size(25.0))
+                        .clicked()
+                    {
                         // Anonymize each object in parallel using rayon
                         let tags_to_anonymize: HashSet<Tag> = [
                             Tag(0x0008, 0x0014), // Instance Creator UID
@@ -838,6 +882,11 @@ impl MyEguiApp {
 
 impl eframe::App for MyEguiApp {
     #[inline(always)]
+    fn on_close_event(&mut self) -> bool {
+        self.show_confirmation_dialog = true;
+        self.allowed_to_close
+    }
+    #[inline(always)]
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("my_top_panel").show(ctx, |ui| {
             menu::bar(ui, |ui| {
@@ -852,10 +901,16 @@ impl eframe::App for MyEguiApp {
                     ui.separator();
                     ui.menu_button(RichText::new("Mode").size(15.0), |ui| {
                         ui.vertical(|ui| {
-                            if ui.button(RichText::new("Parameter Calculator").size(15.0)).clicked() {
+                            if ui
+                                .button(RichText::new("Parameter Calculator").size(15.0))
+                                .clicked()
+                            {
                                 self.show_mode = "parameters".into()
                             };
-                            if ui.button(RichText::new("Treatment Summary").size(15.0)).clicked() {
+                            if ui
+                                .button(RichText::new("Treatment Summary").size(15.0))
+                                .clicked()
+                            {
                                 self.show_mode = "summary".into()
                             };
                             if ui.button(RichText::new("dicom tools").size(15.0)).clicked() {
@@ -871,6 +926,26 @@ impl eframe::App for MyEguiApp {
             "summary" => self.show_summary_ui(ctx, frame),
             "dicom" => self.show_dicom_ui(ctx, frame),
             _ => (), // handle other cases
-        }
+        };
+        if self.show_confirmation_dialog {
+            // Show confirmation dialog:
+            egui::Window::new(RichText::new("Do you want to quit?").size(30.0))
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("Cancel").size(20.0)).clicked() {
+                            self.show_confirmation_dialog = false;
+                        }
+
+                        if ui.button(RichText::new("Yes!").size(20.0)).clicked() {
+                            self.allowed_to_close = true;
+                            frame.close();
+                        }
+                    });
+                });
+        };
+
     }
+    
 }
